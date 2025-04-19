@@ -1,0 +1,11 @@
+{
+    "servers": {
+        "jira-mcp": {
+            "type": "stdio",
+            "command": "bun",
+            "args": [
+                "${workspaceFolder}/src/index.ts",
+            ]
+        }
+    }
+}

@@ -19,8 +19,12 @@ const server = new McpServer({
   version: "0.1.0"
 });
 
-// Define the schema for the tool input (optional JQL string)
+// Define the schemas for the tool input (optional JQL string)
 const getJiraIssuesSchema = z.object({ jql: z.string().optional() });
+const fetchConfluenceDocsSchema = z.object({
+  query: z.string().optional(), 
+  pageId: z.string().optional(), 
+});
 
 // Register a tool on the MCP server to fetch Jira issues
 server.tool(
@@ -73,5 +77,73 @@ server.tool(
   },
 );
 
-// Start the MCP server using stdio transport
+// Register the fetch_confluence_docs tool
+server.tool(
+  "fetch_confluence_docs",
+  "Fetches Confluence documentation pages by search query or page ID.",
+  fetchConfluenceDocsSchema.shape,
+  async ({ query, pageId }) => {
+    try {
+      const auth = Buffer.from(
+        `${process.env.CONFLUENCE_EMAIL || process.env.JIRA_EMAIL}:${process.env.CONFLUENCE_API_TOKEN || process.env.JIRA_API_TOKEN}`
+      ).toString("base64");
+      const host = process.env.CONFLUENCE_HOST || process.env.JIRA_HOST;
+      if (!host) throw new Error("CONFLUENCE_HOST env var is required");
+      let url = "";
+
+      if (pageId) {
+        url = `https://${host}/wiki/rest/api/content/${pageId}?expand=body.storage,title`;
+      } else if (query) {
+        url = `https://${host}/wiki/rest/api/content/search?cql=${encodeURIComponent(
+          `type=page AND text~\"${query}\"`
+        )}&expand=title,body.storage`;
+      } else {
+        throw new Error("Either query or pageId must be provided");
+      }
+
+      const resp = await axios.get(url, {
+        headers: {
+          Authorization: `Basic ${auth}`,
+          Accept: "application/json"
+        }
+      });
+
+      if (pageId) {
+        const page = resp.data;
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Title: ${page.title}\nContent (HTML):\n${page.body?.storage?.value || "No content"}`
+            }
+          ]
+        };
+      } else {
+        const results = resp.data.results.map((p: any) => ({
+          id: p.id,
+          title: p.title,
+          content: p.body?.storage?.value || "No content"
+        }));
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(results, null, 2)
+            }
+          ]
+        };
+      }
+    } catch (error: any) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Failed to fetch Confluence docs: ${error?.response?.data?.message || error.message}`
+          }
+        ]
+      };
+    }
+  }
+);
+
 await server.connect(new StdioServerTransport());
